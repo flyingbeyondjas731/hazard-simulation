@@ -1,9 +1,9 @@
-# ⛰️ Geotechnical Smart Peg Swarm: Landslide Early-Warning System
+# 🏭 Smart Sentinel: Multi-Modal Edge AI Chemical Leak Detection
 
-An off-grid, geotechnical early-warning mesh network utilizing subsurface "Smart Pegs" to detect micro-structural slope failure precursors hours or days before a visible surface collapse occurs.
+An industrial early-warning safety system that combines multi-modal Edge AI (acoustics, optical refraction tracking, and chemical sensing) with real-time atmospheric dispersion modeling to detect toxic chemical leaks (Ammonia and Styrene) while eliminating costly false alarms.
 
 **WORKING**
-* **Subsurface Smart Pegs:** Instead of monitoring surface movement, fixed sensor pegs are driven directly into vulnerable shear planes to monitor underground pore water pressure and acoustic emissions.
-* **Micro-Power Hardware Interrupts:** To survive for months on small solar panels, the edge processors remain in deep sleep. They are physically jolted awake only when a piezoelectric sensor registers the ultrasonic snapping of tearing roots or rock micro-fractures.
-* **Predictive AI Engine:** An embedded LSTM analyzes 14-day trends of rainfall, soil moisture, tilt, and acoustic hits, while an Isolation Forest calibrates to the unique baseline geology of that specific peg. 
-* **Off-Grid Autonomous Mitigation:** Nodes bypass vulnerable mountain cellular networks by bouncing data hop-by-hop via a Sub-GHz LoRaWAN mesh. If the AI detects imminent collapse, it autonomously triggers physical highway barriers and sirens in under 5 seconds.
+* **Dual-Trigger Wake-Up:** For pressurized Ammonia, ultrasonic microphones listen for high-frequency hisses to wake the system. For volatile Styrene, duty-cycled cameras periodically wake to scan the floor for liquid spills. 
+* **Optical Shimmer Verification:** Standard cameras utilize Background-Oriented Schlieren (BOS) AI to detect the invisible "shimmer" (light refraction) of escaping gas or evaporating vapors.
+* **Strict Sensor Fusion:** An edge-deployed Random Forest classifier acts as a strict AND-gate. It only triggers a confirmed leak if the acoustic/spill trigger, the optical gas shimmer, and the chemical sensor (PPM spike) all corroborate the event. 
+* **Dynamic Hazard Mapping:** Once a leak is confirmed, the system pulls live anemometer data to dynamically plot a Gaussian Plume (directional cone) or Gaussian Puff (expanding circle) hazard map, automatically triggering plant mitigation systems.
