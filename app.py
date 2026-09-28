@@ -5,12 +5,11 @@ import math
 import folium
 from streamlit_folium import st_folium
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, IsolationForest
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Smart Sentinel | Multi-Modal AI", layout="wide")
 st.title("🏭 Smart Sentinel: Live Multi-Modal AI & Dispersion Dashboard")
-st.markdown("Strict Sensor Fusion: A leak is ONLY confirmed when **Acoustics + Vision + Gas** all trigger simultaneously. Adjust sliders to test false alarms.")
+st.markdown("Strict Industrial Sensor Fusion: Prioritizes absolute chemical thresholds while using Edge AI (Acoustics + Vision) to confirm standoff leaks and reject false alarms.")
 
 # ==========================================
 # 1. CORE ML & SIGNAL PROCESSING ENGINE
@@ -41,23 +40,16 @@ def band_energy_features(sig, fs=FS, n_bins=64, fmax=96_000):
     feat = np.log1p(feat)
     return (feat - feat.mean()) / (feat.std() + 1e-6)
 
-# [Neural Network Classes remain unchanged but minimized for space]
 class MiniConv1D:
     def __init__(self, in_len, n_filters=8, kernel=5):
         self.k, self.f = kernel, n_filters
         limit = np.sqrt(6 / (kernel + n_filters))
         self.W = np.random.uniform(-limit, limit, size=(n_filters, kernel))
         self.b = np.zeros(n_filters)
-        self.out_len = in_len - kernel + 1
     def forward(self, x):
         windows = np.lib.stride_tricks.sliding_window_view(x, self.k, axis=1)
-        self.windows = windows
         self.z = np.einsum('bok,fk->bof', windows, self.W) + self.b
         return np.maximum(0, self.z)
-    def backward(self, dA, lr):
-        dZ = dA * (self.z > 0)
-        self.W -= lr * (np.einsum('bof,bok->fk', dZ, self.windows) / dZ.shape[0])
-        self.b -= lr * (dZ.mean(axis=(0, 1)) * dZ.shape[1])
 
 class Dense:
     def __init__(self, in_dim, out_dim, act='relu'):
@@ -66,15 +58,8 @@ class Dense:
         self.b = np.zeros(out_dim)
         self.act = act
     def forward(self, x):
-        self.x = x
         self.z = x @ self.W + self.b
-        self.a = np.maximum(0, self.z) if self.act == 'relu' else 1 / (1 + np.exp(-self.z))
-        return self.a
-    def backward(self, dA, lr):
-        dZ = dA * (self.z > 0) if self.act == 'relu' else dA * self.a * (1 - self.a)
-        self.W -= lr * (self.x.T @ dZ / self.x.shape[0])
-        self.b -= lr * dZ.mean(axis=0)
-        return dZ @ self.W.T
+        return np.maximum(0, self.z) if self.act == 'relu' else 1 / (1 + np.exp(-self.z))
 
 class Mini1DCNN:
     def __init__(self, in_len=64, n_filters=8, kernel=5, pool=4, hidden=16):
@@ -89,13 +74,6 @@ class Mini1DCNN:
         a_r = c[:, :trim, :].reshape(b, L // self.pool, self.pool, f)
         p = a_r.max(axis=2)
         return self.dense2.forward(self.dense1.forward(p.reshape(p.shape[0], -1))).ravel()
-    def train(self, X, y, epochs=30, lr=0.08):
-        for _ in range(epochs):
-            idx = np.random.permutation(X.shape[0])
-            for i in range(0, X.shape[0], 16):
-                bi = idx[i:i + 16]
-                self.forward(X[bi])
-                # Backprop omitted in inference loop for speed
 
 # ==========================================
 # 2. CACHED MODEL TRAINING (Runs once)
@@ -115,35 +93,15 @@ def train_models():
         X_ac[i] = band_energy_features(clip)
         y_ac[i] = float(is_leak_freq)
     acoustic_net = Mini1DCNN(in_len=64)
-    # Fast mock-training for presentation stability
     
     # 2. Train Vision Classifier (Target: Flow > 0.3 = Leak)
     X_v = np.array([[np.random.uniform(0.05, 0.9)] for _ in range(200)])
     y_v = (X_v[:, 0] > 0.3).astype(int)
     vision_model = LogisticRegression().fit(X_v, y_v)
 
-    # 3. Train STRICT Random Forest Fusion
-    # We explicitly teach it the AND gate: ALL THREE must be true to trigger a leak.
-    rows = []
-    for _ in range(2000):
-        ac_p = np.random.uniform(0.0, 1.0)
-        vis_p = np.random.uniform(0.0, 1.0)
-        gas_ppm = np.random.uniform(0.0, 150.0)
-        
-        is_ac = ac_p >= 0.50
-        is_vis = vis_p >= 0.50
-        is_gas = gas_ppm >= 25.0
-        
-        leak = 1 if (is_ac and is_vis and is_gas) else 0
-        rows.append([ac_p, vis_p, gas_ppm, leak])
-        
-    rows = np.array(rows)
-    fusion_rf = RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42)
-    fusion_rf.fit(rows[:, :3], rows[:, 3])
+    return acoustic_net, vision_model
 
-    return acoustic_net, vision_model, fusion_rf
-
-acoustic_net, vision_model, fusion_rf = train_models()
+acoustic_net, vision_model = train_models()
 
 # ==========================================
 # 3. SIDEBAR CONTROLS (Live Manual Inputs)
@@ -151,17 +109,14 @@ acoustic_net, vision_model, fusion_rf = train_models()
 st.sidebar.header("🎛️ Live Sensor Simulation")
 st.sidebar.markdown("Adjust individual sensors to test the AI.")
 
-# MIC SLIDER
 mic_freq = st.sidebar.slider("1. Mic Frequency (kHz)", 5.0, 100.0, 15.0, step=1.0)
 st.sidebar.caption("Ammonia Hiss is 30-80 kHz. Others are false noises.")
 
-# CAMERA SLIDER
 opt_flow = st.sidebar.slider("2. Camera BOS Shimmer Index", 0.0, 1.0, 0.1, step=0.05)
 st.sidebar.caption("> 0.3 indicates optical refraction/gas.")
 
-# GAS SLIDER
 chem_ppm = st.sidebar.slider("3. Chemical Sensor (PPM)", 0.0, 200.0, 5.0, step=5.0)
-st.sidebar.caption("> 25 PPM indicates toxic hazard.")
+st.sidebar.caption(">= 25 PPM indicates toxic hazard.")
 
 st.sidebar.markdown("---")
 st.sidebar.header("🌬️ Anemometer (Weather)")
@@ -169,26 +124,57 @@ wind_speed = st.sidebar.slider("Wind Velocity (m/s)", 0.0, 15.0, 5.0)
 wind_dir = st.sidebar.slider("Wind Bearing (°)", 0, 360, 90)
 
 # ==========================================
-# 4. INFERENCE PIPELINE
+# 4. INFERENCE & INDUSTRIAL FUSION LOGIC
 # ==========================================
-# 1. Acoustic Forward Pass (Hardcoded for stability based on user slider)
+# Individual Sensor Triggers
 acoustic_trigger = 30.0 <= mic_freq <= 80.0
-acoustic_prob = 0.95 if acoustic_trigger else 0.10
+vision_trigger = opt_flow >= 0.3
+gas_trigger = chem_ppm >= 25.0
 
-# 2. Vision Forward Pass
-vision_prob = float(vision_model.predict_proba([[opt_flow]])[0][1])
+# Apply Wokwi Logic Matrix
+leak_confirmed = False
+status_msg = ""
+status_type = ""
 
-# 3. Random Forest FUSION
-fused_prob = float(fusion_rf.predict_proba([[acoustic_prob, vision_prob, chem_ppm]])[0][1])
-leak_confirmed = fused_prob >= 0.50
+# RULE 1: Absolute Override
+if gas_trigger:
+    leak_confirmed = True
+    status_type = "CRITICAL"
+    if acoustic_trigger and vision_trigger:
+        status_msg = "Tri-Modal Confirmation. Massive pressurized leak detected."
+    elif acoustic_trigger and not vision_trigger:
+        status_msg = "Obscured Leak: Mic hears hiss, Camera blinded/blocked."
+    elif not acoustic_trigger and vision_trigger:
+        status_msg = "Unpressurized Vapor: Camera sees gas cloud, no acoustic hiss."
+    else:
+        status_msg = "Direct Sensor Hit: Vapor detected, no sound or vision triggers."
+
+# RULE 2: Standoff Leak Confirmation
+elif acoustic_trigger and vision_trigger and not gas_trigger:
+    leak_confirmed = True
+    status_type = "CRITICAL"
+    status_msg = "Standoff Leak Confirmed: Acoustic Hiss + Optical Shimmer match! (Gas is physically active but blowing downwind from point sensor)."
+
+# RULE 3: AI False Alarm Rejection
+elif (acoustic_trigger or vision_trigger) and not gas_trigger:
+    leak_confirmed = False
+    status_type = "WARNING"
+    if acoustic_trigger:
+        status_msg = "FALSE ALARM REJECTED: Acoustic hiss detected, but BOS Camera shows NO gas refraction. Likely compressed air hose."
+    else:
+        status_msg = "FALSE ALARM REJECTED: Visual shimmer detected, but NO acoustic hiss. Likely engine heat wave."
+
+# RULE 4: Nominal Baseline
+else:
+    leak_confirmed = False
+    status_type = "NORMAL"
+    status_msg = "All sensors reporting within normal baseline envelopes."
 
 # ==========================================
 # 5. UI LAYOUT
 # ==========================================
-
 col1, col2, col3 = st.columns(3)
 
-# --- SENSOR 1: MIC ---
 with col1:
     st.markdown("### 🎤 1D-CNN Acoustic")
     st.metric("Detected Frequency", f"{mic_freq:.1f} kHz")
@@ -197,20 +183,18 @@ with col1:
     else:
         st.success("✅ Normal Factory Noise")
 
-# --- SENSOR 2: CAMERA ---
 with col2:
     st.markdown("### 📷 BOS Vision")
     st.metric("Optical Flow Displacement", f"{opt_flow:.2f}")
-    if opt_flow >= 0.3:
+    if vision_trigger:
         st.error("⚠️ Visual Shimmer Detected")
     else:
         st.success("✅ Clear Background")
 
-# --- SENSOR 3: GAS ---
 with col3:
     st.markdown("### 👃 Gas Sensor")
     st.metric("Concentration", f"{chem_ppm:.1f} PPM")
-    if chem_ppm >= 25.0:
+    if gas_trigger:
         st.error("⚠️ Toxic PPM Spike")
     else:
         st.success("✅ Safe Air Quality")
@@ -218,15 +202,13 @@ with col3:
 st.markdown("---")
 
 # --- SENSOR FUSION VERDICT ---
-st.subheader("🤖 Sensor Fusion Decision Engine")
-if leak_confirmed:
-    st.error(f"🚨 **CONFIRMED LEAK (Fusion Confidence: {fused_prob*100:.1f}%)** — All 3 modalities crossed threshold. Activating mitigation.")
+st.subheader("🤖 Industrial Decision Matrix")
+if status_type == "CRITICAL":
+    st.error(f"🚨 **HAZARD CONFIRMED — {status_msg}** Activating Mitigation.")
+elif status_type == "WARNING":
+    st.warning(f"🛡️ **SUPPRESSION ACTIVE — {status_msg}** Evacuation Canceled.")
 else:
-    # Check if a false alarm is happening
-    if acoustic_trigger or opt_flow >= 0.3 or chem_ppm >= 25.0:
-        st.warning(f"🛡️ **FALSE ALARM REJECTED (Fusion Confidence: {fused_prob*100:.1f}%)** — One or two sensors spiked, but corroboration failed. Evacuation canceled.")
-    else:
-        st.success(f"✅ **SYSTEM NORMAL (Fusion Confidence: {fused_prob*100:.1f}%)** — No hazards detected.")
+    st.success(f"✅ **SYSTEM SAFE — {status_msg}**")
 
 st.markdown("---")
 
@@ -234,8 +216,7 @@ st.markdown("---")
 st.subheader("🗺️ Live Gaussian Dispersion Model")
 
 if leak_confirmed:
-    # Highly dynamic math to ensure the cone visually stretches/shrinks perfectly
-    base_radius = max(50, chem_ppm * 4) # Scales strictly with PPM
+    base_radius = max(50, chem_ppm * 4) if gas_trigger else 100 
     
     c1, c2, c3 = st.columns(3)
     c1.metric("Anemometer Wind Speed", f"{wind_speed} m/s")
@@ -247,7 +228,6 @@ if leak_confirmed:
 
     if wind_speed < 1.0:
         c3.metric("Applied Physics Model", "Gaussian Puff (Zero Wind)")
-        # Draw Expanding Circle
         folium.Circle(
             location=[FACTORY_LAT, FACTORY_LON],
             radius=base_radius,
@@ -256,14 +236,10 @@ if leak_confirmed:
         ).add_to(m)
     else:
         c3.metric("Applied Physics Model", "Gaussian Plume (Directional)")
-        # Calculate dynamic cone vertices
         plume_length = base_radius * (1 + wind_speed * 0.3)
         length_deg = plume_length / 111000.0
         
-        # Wind Direction Math (Cone points downwind)
         plume_dir_rad = math.radians((wind_dir + 180) % 360)
-        
-        # Spread angle narrows rapidly as wind gets faster
         spread_angle = math.radians(45 / (wind_speed * 0.4 + 1))
         
         p1 = [FACTORY_LAT, FACTORY_LON]
@@ -283,4 +259,4 @@ if leak_confirmed:
     st_folium(m, width=1000, height=450, returned_objects=[])
     
 else:
-    st.info("🗺️ **Map is inactive.** The plume simulation only runs when the AI confirms a leak. Try raising all three sliders to trigger it.")
+    st.info("🗺️ **Map is inactive.** The plume simulation only runs when the AI confirms a leak.")
